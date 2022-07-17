@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Image resizing service through SQS
+
+Parameters:
+  SourceBucketName:
+    Type: String
+  QueueName:
+    Type: String
+  LambdaFunctionName:
+    Type: String
+
+Resources:
+  ## S3 bucket
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    DependsOn:
+      - TriggerQueueQueuePolicy
+    Properties:
+      BucketName: !Ref SourceBucketName
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: "s3:ObjectCreated:Put"
+            Queue: !GetAtt TriggerQueue.Arn
+
+
+  ## SQS Queue
+  TriggerQueue:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      QueueName: !Ref QueueName
+
+
+  ## Policies
+  TriggerQueueQueuePolicy:
+    Type: "AWS::SQS::QueuePolicy"
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: QueuePolicy
+        Statement:
+          - Sid: Allow-SendMessage-To-Queue-From-S3-Event-Notification
+            Effect: Allow
+            Principal:
+              Service: "s3.amazonaws.com"
+            Action:
+              - "sqs:SendMessage"
+            Resource: !GetAtt TriggerQueue.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Join ["",['arn:aws:s3:::',!Ref SourceBucketName]]
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Queues:
+        - Ref: TriggerQueue
+
+  ## Lambda function
+  TriggerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.9
+      CodeUri: function/.
+      Description: Called  by SQSTrigger
+      Timeout: 10
+      # Function's execution role
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSLambdaReadOnlyAccess
+        - AWSXrayWriteOnlyAccess
+      Tracing: Active
+
+
+
+
+#  TriggerFunction:
+#    Type: AWS::Lambda::Function
+#    Properties:
+#      FunctionName: !Ref LambdaFunctionName
+#      Code:
+#        ZipFile: |
+#          def
+#      Handler: app.handler
+#      Runtime: nodejs12.x
+#      MemorySize: 2048
+#      Layers:
+#        - !Sub 'arn:aws:lambda:${AWS::Region}:175033217214:layer:graphicsmagick:2'
+#      Policies:
+#        - S3ReadPolicy:
+#            BucketName: !Ref SourceBucketName
+#      Environment:
+#        Variables:
+#          DESTINATION_BUCKETNAME: !Ref DestinationBucketName
+#      Events:
+#        MySQSEvent:
+#          Type: SQS
+#          Properties:
+#            Queue: !GetAtt ResizerQueue.Arn
+
+Outputs:
+  SourceBucketName:
+    Value: !Ref SourceBucketName
+    Description: S3 Bucket for object storage
+  QueueName:
+    Value: !Ref QueueName
+    Description: SQS Queue for queuing the s3 events
+  FunctionArn:
+    Value: !Ref TriggerFunction
+    Description: ResizerFunction function  Arn
+

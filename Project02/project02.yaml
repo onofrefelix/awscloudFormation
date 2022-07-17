@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: This template create a lambda triggered by SQS and SQS Triggered by S3
+
+Parameters:
+  SourceBucketName:
+    Type: String
+  QueueName:
+    Type: String
+  LambdaFunctionName:
+    Type: String
+
+Resources:
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: allowLambdaLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:*
+                Resource: arn:aws:logs:*:*:*
+        - PolicyName: allowSqs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Resource: !GetAtt TriggerQueue.Arn
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          import logging
+
+
+          def lambda_handler(event, context):
+              # TODO implement
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Hello from Lambda!')
+              }
+
+
+      Handler: main.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      FunctionName: !Ref LambdaFunctionName
+      Runtime: python3.9
+      Timeout: 60
+      MemorySize: 512
+
+  LambdaFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: true
+      EventSourceArn: !GetAtt TriggerQueue.Arn
+      FunctionName: !GetAtt LambdaFunction.Arn
+
+
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    DependsOn:
+      - TriggerQueueQueuePolicy
+    Properties:
+      BucketName: !Ref SourceBucketName
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: "s3:ObjectCreated:Put"
+            Queue: !GetAtt TriggerQueue.Arn
+
+    ## Policies
+  TriggerQueueQueuePolicy:
+    Type: "AWS::SQS::QueuePolicy"
+    Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Id: QueuePolicy
+          Statement:
+            - Sid: Allow-SendMessage-To-Queue-From-S3-Event-Notification
+              Effect: Allow
+              Principal:
+                Service: "s3.amazonaws.com"
+              Action:
+                - "sqs:SendMessage"
+              Resource: !GetAtt TriggerQueue.Arn
+              Condition:
+                ArnLike:
+                  aws:SourceArn: !Join [ "",[ 'arn:aws:s3:::',!Ref SourceBucketName ] ]
+                StringEquals:
+                  aws:SourceAccount: !Ref AWS::AccountId
+        Queues:
+          - Ref: TriggerQueue
+
+  TriggerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Ref QueueName
+      DelaySeconds: 0
+      VisibilityTimeout: 120
